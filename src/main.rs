@@ -1,9 +1,16 @@
 use bevy::{
     dev_tools::fps_overlay::{FpsOverlayConfig, FpsOverlayPlugin},
+    prelude::App,
     prelude::*,
     text::FontSmoothing,
     window::{CursorGrabMode, PresentMode, PrimaryWindow},
 };
+use bevy_egui::{EguiContexts, EguiPlugin, egui};
+use bevy_rapier3d::prelude::*;
+use once_cell::sync::Lazy;
+use std::sync::Mutex;
+
+static VSYNC: Lazy<Mutex<bool>> = Lazy::new(|| Mutex::new(true));
 
 struct OverlayColor;
 
@@ -28,13 +35,34 @@ fn main() {
                     enabled: true,
                 },
             },
+            EguiPlugin,
         ))
-        .add_systems(Startup, setup)
-        .add_systems(Update, keybinds)
+        .add_plugins(RapierPhysicsPlugin::<NoUserData>::default())
+        .add_plugins(RapierDebugRenderPlugin::default())
+        .add_systems(Startup, (setup, setup_camera))
+        .add_systems(Update, (keybinds, game_ui, game_setting))
         .run();
 }
 
-fn game_setting(mut settings: Query<&mut Window, With<PrimaryWindow>>) {}
+// fn object_rigidbody() {}
+
+fn game_ui(mut contexts: EguiContexts) {
+    let mut vsync_status = VSYNC.lock().unwrap();
+    egui::Window::new("Hello World").show(contexts.ctx_mut(), |ui| {
+        ui.checkbox(&mut *vsync_status, "Vsync");
+    });
+}
+
+fn game_setting(mut windows: Query<&mut Window, With<PrimaryWindow>>) {
+    let mut window = windows.single_mut();
+    let vsync_status = VSYNC.lock().unwrap();
+
+    if *vsync_status == true {
+        window.present_mode = PresentMode::AutoVsync;
+    } else {
+        window.present_mode = PresentMode::AutoNoVsync;
+    }
+}
 
 fn keybinds(
     key_input: Res<ButtonInput<KeyCode>>,
@@ -57,11 +85,21 @@ fn lock_hide_cursor(mut windows: Query<&mut Window, With<PrimaryWindow>>) {
     }
 }
 
+fn setup_camera(mut commands: Commands) {
+    commands.spawn((
+        Camera3d::default(),
+        Transform::from_xyz(-1.0, 5.0, 20.0).looking_at(Vec3::ZERO, Vec3::Y),
+    ));
+}
+
 fn setup(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
+    let ground_size = Vec3::new(10.0, 1.0, 9.0);
+
+    // FPS Counter
     commands.spawn((Node {
         position_type: PositionType::Absolute,
         bottom: Val::Px(12.),
@@ -69,18 +107,26 @@ fn setup(
         ..Default::default()
     },));
 
-    // Platform (Circle)
+    // Ground
     commands.spawn((
-        Mesh3d(meshes.add(Circle::new(4.0))),
+        Mesh3d(meshes.add(Cuboid::new(ground_size.x, ground_size.y, ground_size.z))),
         MeshMaterial3d(materials.add(Color::WHITE)),
-        Transform::from_rotation(Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2)),
+        Collider::cuboid(
+            ground_size.x / 2.0,
+            ground_size.y / 2.0,
+            ground_size.z / 2.0,
+        ),
+        Transform::from_xyz(0.0, -2.0, 0.0),
     ));
 
     // Sphere
     commands.spawn((
+        RigidBody::Dynamic,
+        Collider::ball(0.5),
+        Restitution::coefficient(1.0),
+        Transform::from_xyz(0.0, 8.0, 0.0),
         Mesh3d(meshes.add(Sphere::new(0.5))),
         MeshMaterial3d(materials.add(Color::srgb_u8(124, 144, 255))),
-        Transform::from_xyz(0.0, 0.5, 0.0),
     ));
 
     // light
@@ -89,11 +135,6 @@ fn setup(
             shadows_enabled: true,
             ..default()
         },
-        Transform::from_xyz(4.0, 8.0, 4.0),
-    ));
-    // camera
-    commands.spawn((
-        Camera3d::default(),
-        Transform::from_xyz(-2.5, 4.5, 9.0).looking_at(Vec3::ZERO, Vec3::Y),
+        Transform::from_xyz(0.0, 3.0, 10.0),
     ));
 }
