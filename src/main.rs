@@ -1,7 +1,7 @@
 use bevy::{
     dev_tools::fps_overlay::{FpsOverlayConfig, FpsOverlayPlugin},
-    prelude::App,
-    prelude::*,
+    input::mouse::MouseMotion,
+    prelude::{App, *},
     text::FontSmoothing,
     window::{CursorGrabMode, PresentMode, PrimaryWindow},
 };
@@ -10,9 +10,14 @@ use bevy_rapier3d::prelude::*;
 use once_cell::sync::Lazy;
 use std::sync::Mutex;
 
-static VSYNC: Lazy<Mutex<bool>> = Lazy::new(|| Mutex::new(true));
+static VSYNC: Lazy<Mutex<bool>> = Lazy::new(|| Mutex::new(false));
+static BALL_COUNTER: Lazy<Mutex<u16>> = Lazy::new(|| Mutex::new(0));
+static MOUSE_SENSITIVITY: Lazy<Mutex<f32>> = Lazy::new(|| Mutex::new(0.1));
 
 struct OverlayColor;
+
+#[derive(Component)]
+struct RotataCamera;
 
 #[allow(dead_code)]
 impl OverlayColor {
@@ -41,15 +46,90 @@ fn main() {
         .add_plugins(RapierDebugRenderPlugin::default())
         .add_systems(Startup, (setup, setup_camera))
         .add_systems(Update, (keybinds, game_ui, game_setting))
+        .add_systems(Update, (mouse_free_look, mouse_movement))
         .run();
 }
 
-// fn object_rigidbody() {}
+fn mouse_movement(
+    keyboard: Res<ButtonInput<KeyCode>>,
+    timer: Res<Time>,
+    mut query: Query<&mut Transform, With<RotataCamera>>,
+) {
+    let mut transform = query.single_mut();
+    let mut direction = Vec3::ZERO;
+
+    if keyboard.pressed(KeyCode::KeyW) {
+        direction += transform.forward().as_vec3();
+    }
+    if keyboard.pressed(KeyCode::KeyS) {
+        direction += transform.back().as_vec3();
+    }
+    if keyboard.pressed(KeyCode::KeyA) {
+        direction += transform.left().as_vec3();
+    }
+    if keyboard.pressed(KeyCode::KeyD) {
+        direction += transform.right().as_vec3();
+    }
+
+    if direction.length_squared() > 0.0 {
+        direction = direction.normalize();
+        if direction.is_normalized() {
+            let speed = 5.0;
+            transform.translation += direction * speed * timer.delta_secs();
+        } else {
+            println!("Direction is not normalize: {}", direction);
+        }
+    }
+}
+
+fn mouse_free_look(
+    mut cam: Query<&mut Transform, With<RotataCamera>>,
+    timer: Res<Time>,
+    mut evr_mouse_motion: EventReader<MouseMotion>,
+    mut windows: Query<&mut Window, With<PrimaryWindow>>,
+) {
+    let window = windows.single_mut();
+
+    if window.cursor_options.visible == false
+        && window.cursor_options.grab_mode == CursorGrabMode::Confined
+    {
+        let mouse_sensitivity = MOUSE_SENSITIVITY.lock().unwrap();
+        let mut transform = cam.single_mut();
+
+        for event in evr_mouse_motion.read() {
+            let delta = event.delta * *mouse_sensitivity;
+
+            let yaw = Quat::from_rotation_y(-delta.x).normalize();
+            let pitch = Quat::from_rotation_x(-delta.y).normalize();
+
+            transform.rotation = yaw * transform.rotation * timer.delta_secs();
+            transform.rotation = transform.rotation * pitch * timer.delta_secs();
+        }
+    }
+}
 
 fn game_ui(mut contexts: EguiContexts) {
     let mut vsync_status = VSYNC.lock().unwrap();
+    let mut ball_counter = BALL_COUNTER.lock().unwrap();
+    let mut mouse_sensitivity = MOUSE_SENSITIVITY.lock().unwrap();
+
+    let min_ball: u16 = 0;
+    let max_ball: u16 = 100;
+
+    let min_sensi: f32 = 0.1;
+    let max_sensi: f32 = 1.0;
+
     egui::Window::new("Hello World").show(contexts.ctx_mut(), |ui| {
         ui.checkbox(&mut *vsync_status, "Vsync");
+
+        ui.add(egui::Label::new("Ball Counter"));
+        ui.add(egui::Slider::new(&mut *ball_counter, min_ball..=max_ball));
+
+        ui.add(egui::Label::new("Mouse Sensitivity"));
+        ui.add(egui::Slider::new(
+            &mut *mouse_sensitivity,
+            min_sensi..=max_sensi,
+        ));
     });
 }
 
@@ -78,7 +158,7 @@ fn lock_hide_cursor(mut windows: Query<&mut Window, With<PrimaryWindow>>) {
     println!("Mouse Status: {}", window.cursor_options.visible);
     if window.cursor_options.visible == true {
         window.cursor_options.visible = false;
-        window.cursor_options.grab_mode = CursorGrabMode::Locked;
+        window.cursor_options.grab_mode = CursorGrabMode::Confined;
     } else {
         window.cursor_options.visible = true;
         window.cursor_options.grab_mode = CursorGrabMode::None;
@@ -87,6 +167,7 @@ fn lock_hide_cursor(mut windows: Query<&mut Window, With<PrimaryWindow>>) {
 
 fn setup_camera(mut commands: Commands) {
     commands.spawn((
+        RotataCamera,
         Camera3d::default(),
         Transform::from_xyz(-1.0, 5.0, 20.0).looking_at(Vec3::ZERO, Vec3::Y),
     ));
