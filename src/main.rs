@@ -13,11 +13,24 @@ use std::sync::Mutex;
 static VSYNC: Lazy<Mutex<bool>> = Lazy::new(|| Mutex::new(false));
 static BALL_COUNTER: Lazy<Mutex<u16>> = Lazy::new(|| Mutex::new(0));
 static MOUSE_SENSITIVITY: Lazy<Mutex<f32>> = Lazy::new(|| Mutex::new(0.1));
+static GROUND_SIZE: Lazy<Mutex<Vec3>> = Lazy::new(|| {
+    Mutex::new(Vec3 {
+        x: 20.0,
+        y: 1.0,
+        z: 15.0,
+    })
+});
 
 struct OverlayColor;
 
 #[derive(Component)]
 struct RotataCamera;
+
+#[derive(Resource, Default)]
+struct PreviousGroundSize(Vec3);
+
+#[derive(Component)]
+struct Ground;
 
 #[allow(dead_code)]
 impl OverlayColor {
@@ -44,8 +57,12 @@ fn main() {
         ))
         .add_plugins(RapierPhysicsPlugin::<NoUserData>::default())
         .add_plugins(RapierDebugRenderPlugin::default())
+        .insert_resource(PreviousGroundSize(Vec3::ZERO))
         .add_systems(Startup, (setup, setup_camera))
-        .add_systems(Update, (keybinds, game_ui, game_setting))
+        .add_systems(
+            Update,
+            (keybinds, game_ui, game_setting, ground_change_detector),
+        )
         .add_systems(Update, (mouse_free_look, mouse_movement))
         .run();
 }
@@ -73,12 +90,8 @@ fn mouse_movement(
 
     if direction.length_squared() > 0.0 {
         direction = direction.normalize();
-        if direction.is_normalized() {
-            let speed = 5.0;
-            transform.translation += direction * speed * timer.delta_secs();
-        } else {
-            println!("Direction is not normalize: {}", direction);
-        }
+        let speed = 5.0;
+        transform.translation += direction * speed * timer.delta_secs();
     }
 }
 
@@ -91,19 +104,19 @@ fn mouse_free_look(
     let window = windows.single_mut();
 
     if window.cursor_options.visible == false
-        && window.cursor_options.grab_mode == CursorGrabMode::Confined
+    // && window.cursor_options.grab_mode == CursorGrabMode::Confined
     {
         let mouse_sensitivity = MOUSE_SENSITIVITY.lock().unwrap();
         let mut transform = cam.single_mut();
 
         for event in evr_mouse_motion.read() {
-            let delta = event.delta * *mouse_sensitivity;
+            let delta = event.delta * *mouse_sensitivity * timer.delta_secs();
 
-            let yaw = Quat::from_rotation_y(-delta.x).normalize();
-            let pitch = Quat::from_rotation_x(-delta.y).normalize();
+            let yaw = Quat::from_rotation_y(-delta.x);
+            let pitch = Quat::from_rotation_x(-delta.y);
 
-            transform.rotation = yaw * transform.rotation * timer.delta_secs();
-            transform.rotation = transform.rotation * pitch * timer.delta_secs();
+            transform.rotation = yaw * transform.rotation.normalize();
+            transform.rotation = transform.rotation.normalize() * pitch;
         }
     }
 }
@@ -112,6 +125,7 @@ fn game_ui(mut contexts: EguiContexts) {
     let mut vsync_status = VSYNC.lock().unwrap();
     let mut ball_counter = BALL_COUNTER.lock().unwrap();
     let mut mouse_sensitivity = MOUSE_SENSITIVITY.lock().unwrap();
+    let mut ground_size = GROUND_SIZE.lock().unwrap();
 
     let min_ball: u16 = 0;
     let max_ball: u16 = 100;
@@ -119,18 +133,31 @@ fn game_ui(mut contexts: EguiContexts) {
     let min_sensi: f32 = 0.1;
     let max_sensi: f32 = 1.0;
 
-    egui::Window::new("Hello World").show(contexts.ctx_mut(), |ui| {
-        ui.checkbox(&mut *vsync_status, "Vsync");
+    egui::Window::new("Settings")
+        .resizable(true)
+        .show(contexts.ctx_mut(), |ui| {
+            ui.checkbox(&mut *vsync_status, "Vsync");
 
-        ui.add(egui::Label::new("Ball Counter"));
-        ui.add(egui::Slider::new(&mut *ball_counter, min_ball..=max_ball));
+            ui.add(egui::Label::new("Ball Counter"));
+            ui.add(egui::Slider::new(&mut *ball_counter, min_ball..=max_ball));
 
-        ui.add(egui::Label::new("Mouse Sensitivity"));
-        ui.add(egui::Slider::new(
-            &mut *mouse_sensitivity,
-            min_sensi..=max_sensi,
-        ));
-    });
+            ui.add(egui::Label::new("Mouse Sensitivity"));
+            ui.add(egui::Slider::new(
+                &mut *mouse_sensitivity,
+                min_sensi..=max_sensi,
+            ));
+        });
+
+    egui::Window::new("Ground Size")
+        .resizable(true)
+        .show(contexts.ctx_mut(), |ui| {
+            ui.add(egui::Label::new("X-Axis"));
+            ui.add(egui::Slider::new(&mut ground_size.x, 10.0..=100.0));
+            ui.add(egui::Label::new("Y-Axis"));
+            ui.add(egui::Slider::new(&mut ground_size.y, 0.5..=2.0));
+            ui.add(egui::Label::new("Z-Axis"));
+            ui.add(egui::Slider::new(&mut ground_size.z, 10.0..=100.0));
+        });
 }
 
 fn game_setting(mut windows: Query<&mut Window, With<PrimaryWindow>>) {
@@ -159,9 +186,11 @@ fn lock_hide_cursor(mut windows: Query<&mut Window, With<PrimaryWindow>>) {
     if window.cursor_options.visible == true {
         window.cursor_options.visible = false;
         window.cursor_options.grab_mode = CursorGrabMode::Confined;
+        window.cursor_options.hit_test = false;
     } else {
         window.cursor_options.visible = true;
         window.cursor_options.grab_mode = CursorGrabMode::None;
+        window.cursor_options.hit_test = true;
     }
 }
 
@@ -169,27 +198,18 @@ fn setup_camera(mut commands: Commands) {
     commands.spawn((
         RotataCamera,
         Camera3d::default(),
-        Transform::from_xyz(-1.0, 5.0, 20.0).looking_at(Vec3::ZERO, Vec3::Y),
+        Transform::from_xyz(-1.0, 10.0, 30.0).looking_at(Vec3::ZERO, Vec3::Y),
     ));
 }
 
-fn setup(
-    mut commands: Commands,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
+fn spawn_ground(
+    commands: &mut Commands,
+    meshes: &mut ResMut<Assets<Mesh>>,
+    materials: &mut ResMut<Assets<StandardMaterial>>,
 ) {
-    let ground_size = Vec3::new(10.0, 1.0, 9.0);
-
-    // FPS Counter
-    commands.spawn((Node {
-        position_type: PositionType::Absolute,
-        bottom: Val::Px(12.),
-        left: Val::Px(12.),
-        ..Default::default()
-    },));
-
-    // Ground
+    let ground_size = GROUND_SIZE.lock().unwrap();
     commands.spawn((
+        Ground,
         Mesh3d(meshes.add(Cuboid::new(ground_size.x, ground_size.y, ground_size.z))),
         MeshMaterial3d(materials.add(Color::WHITE)),
         Collider::cuboid(
@@ -199,13 +219,58 @@ fn setup(
         ),
         Transform::from_xyz(0.0, -2.0, 0.0),
     ));
+}
+
+fn ground_change_detector(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut prev: ResMut<PreviousGroundSize>,
+    query: Query<Entity, With<Ground>>,
+) {
+    let current = *GROUND_SIZE.lock().unwrap();
+
+    if current != prev.0 {
+        for entity in query.iter() {
+            commands.entity(entity).despawn_recursive();
+        }
+
+        spawn_ground(&mut commands, &mut meshes, &mut materials);
+
+        prev.0 = current;
+    }
+}
+
+fn setup(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+) {
+    // FPS Counter
+    commands.spawn((Node {
+        position_type: PositionType::Absolute,
+        bottom: Val::Px(12.),
+        left: Val::Px(12.),
+        ..Default::default()
+    },));
+
+    commands.insert_resource(PreviousGroundSize(Vec3::ZERO));
+    // Ground
+    spawn_ground(&mut commands, &mut meshes, &mut materials);
+
+    // commands.spawn((
+    //     Mesh3d(meshes.add(Sphere::new(3.0))),
+    //     MeshMaterial3d(materials.add(Color::WHITE)),
+    //     Collider::ball(3.0),
+    //     Transform::from_xyz(0.0, 2.0, 0.0),
+    // ));
 
     // Sphere
     commands.spawn((
         RigidBody::Dynamic,
         Collider::ball(0.5),
         Restitution::coefficient(1.0),
-        Transform::from_xyz(0.0, 8.0, 0.0),
+        Transform::from_xyz(0.0, 15.0, 0.0),
         Mesh3d(meshes.add(Sphere::new(0.5))),
         MeshMaterial3d(materials.add(Color::srgb_u8(124, 144, 255))),
     ));

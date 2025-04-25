@@ -1,7 +1,12 @@
 # NOTES
 
+## Status
+>
+> Left to put a 3D Transparent Sphere collider where we will spawn multiple balls inside it
+
 <!--toc:start-->
 - [NOTES](#notes)
+  - [Status](#status)
 <!--toc:end-->
 
 - <https://docs.rs/bevy/latest/bevy/window/struct.CursorOptions.html>
