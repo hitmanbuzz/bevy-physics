@@ -4,7 +4,8 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-bevy = { version = "0.15.3", features = ["bevy_dev_tools"] }
-bevy_egui = "0.33.0"
+bevy = { version = "0.16.0", features = ["bevy_dev_tools"] }
+bevy_egui = "0.34.1"
+# bevy_rapier3d = "0.29.0"
+bevy_rapier3d = { git = "https://github.com/mnmaita/bevy_rapier.git", branch = "mnmaita/bevy-0.16" }
 once_cell = "1.21.3"
-bevy_rapier3d = { version = "0.29.0", features = [ "simd-stable", "debug-render-3d" ] }

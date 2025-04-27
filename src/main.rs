@@ -2,10 +2,10 @@ use bevy::{
     dev_tools::fps_overlay::{FpsOverlayConfig, FpsOverlayPlugin},
     input::mouse::MouseMotion,
     prelude::{App, *},
-    text::FontSmoothing,
+    text::{FontSmoothing, LineHeight},
     window::{CursorGrabMode, PresentMode, PrimaryWindow},
 };
-use bevy_egui::{EguiContexts, EguiPlugin, egui};
+use bevy_egui::{EguiContextPass, EguiContexts, EguiPlugin, egui};
 use bevy_rapier3d::prelude::*;
 use once_cell::sync::Lazy;
 use std::sync::Mutex;
@@ -46,23 +46,25 @@ fn main() {
                 config: FpsOverlayConfig {
                     text_config: TextFont {
                         font_size: 20.0,
+                        line_height: LineHeight::RelativeToFont(1.2),
                         font: default(),
                         font_smoothing: FontSmoothing::AntiAliased,
                     },
                     text_color: OverlayColor::GREEN,
                     enabled: true,
+                    ..default()
                 },
             },
-            EguiPlugin,
         ))
         .add_plugins(RapierPhysicsPlugin::<NoUserData>::default())
         .add_plugins(RapierDebugRenderPlugin::default())
+        .add_plugins(EguiPlugin {
+            enable_multipass_for_primary_context: true,
+        })
         .insert_resource(PreviousGroundSize(Vec3::ZERO))
-        .add_systems(Startup, (setup, setup_camera))
-        .add_systems(
-            Update,
-            (keybinds, game_ui, game_setting, ground_change_detector),
-        )
+        .add_systems(Startup, (setup, setup_camera, setup_light))
+        .add_systems(EguiContextPass, game_ui)
+        .add_systems(Update, (keybinds, game_setting, ground_change_detector))
         .add_systems(Update, (mouse_free_look, mouse_movement))
         .run();
 }
@@ -72,7 +74,7 @@ fn mouse_movement(
     timer: Res<Time>,
     mut query: Query<&mut Transform, With<RotataCamera>>,
 ) {
-    let mut transform = query.single_mut();
+    let mut transform = query.single_mut().unwrap();
     let mut direction = Vec3::ZERO;
 
     if keyboard.pressed(KeyCode::KeyW) {
@@ -101,13 +103,13 @@ fn mouse_free_look(
     mut evr_mouse_motion: EventReader<MouseMotion>,
     mut windows: Query<&mut Window, With<PrimaryWindow>>,
 ) {
-    let window = windows.single_mut();
+    let window = windows.single_mut().unwrap();
 
     if window.cursor_options.visible == false
-    // && window.cursor_options.grab_mode == CursorGrabMode::Confined
+        && window.cursor_options.grab_mode == CursorGrabMode::Confined
     {
         let mouse_sensitivity = MOUSE_SENSITIVITY.lock().unwrap();
-        let mut transform = cam.single_mut();
+        let mut transform = cam.single_mut().unwrap();
 
         for event in evr_mouse_motion.read() {
             let delta = event.delta * *mouse_sensitivity * timer.delta_secs();
@@ -161,7 +163,7 @@ fn game_ui(mut contexts: EguiContexts) {
 }
 
 fn game_setting(mut windows: Query<&mut Window, With<PrimaryWindow>>) {
-    let mut window = windows.single_mut();
+    let mut window = windows.single_mut().unwrap();
     let vsync_status = VSYNC.lock().unwrap();
 
     if *vsync_status == true {
@@ -181,7 +183,7 @@ fn keybinds(
 }
 
 fn lock_hide_cursor(mut windows: Query<&mut Window, With<PrimaryWindow>>) {
-    let mut window = windows.single_mut();
+    let mut window = windows.single_mut().unwrap();
     println!("Mouse Status: {}", window.cursor_options.visible);
     if window.cursor_options.visible == true {
         window.cursor_options.visible = false;
@@ -199,6 +201,16 @@ fn setup_camera(mut commands: Commands) {
         RotataCamera,
         Camera3d::default(),
         Transform::from_xyz(-1.0, 10.0, 30.0).looking_at(Vec3::ZERO, Vec3::Y),
+    ));
+}
+
+fn setup_light(mut commands: Commands) {
+    commands.spawn((
+        PointLight {
+            shadows_enabled: true,
+            ..default()
+        },
+        Transform::from_xyz(0.0, 3.0, 10.0),
     ));
 }
 
@@ -232,11 +244,10 @@ fn ground_change_detector(
 
     if current != prev.0 {
         for entity in query.iter() {
-            commands.entity(entity).despawn_recursive();
+            commands.entity(entity).despawn();
         }
 
         spawn_ground(&mut commands, &mut meshes, &mut materials);
-
         prev.0 = current;
     }
 }
@@ -254,16 +265,16 @@ fn setup(
         ..Default::default()
     },));
 
-    commands.insert_resource(PreviousGroundSize(Vec3::ZERO));
     // Ground
+    commands.insert_resource(PreviousGroundSize(Vec3::ZERO));
     spawn_ground(&mut commands, &mut meshes, &mut materials);
 
-    // commands.spawn((
-    //     Mesh3d(meshes.add(Sphere::new(3.0))),
-    //     MeshMaterial3d(materials.add(Color::WHITE)),
-    //     Collider::ball(3.0),
-    //     Transform::from_xyz(0.0, 2.0, 0.0),
-    // ));
+    commands.spawn((
+        Mesh3d(meshes.add(Sphere::new(3.0))),
+        MeshMaterial3d(materials.add(Color::WHITE)),
+        Collider::ball(3.0),
+        Transform::from_xyz(0.0, 2.0, 0.0),
+    ));
 
     // Sphere
     commands.spawn((
@@ -273,14 +284,5 @@ fn setup(
         Transform::from_xyz(0.0, 15.0, 0.0),
         Mesh3d(meshes.add(Sphere::new(0.5))),
         MeshMaterial3d(materials.add(Color::srgb_u8(124, 144, 255))),
-    ));
-
-    // light
-    commands.spawn((
-        PointLight {
-            shadows_enabled: true,
-            ..default()
-        },
-        Transform::from_xyz(0.0, 3.0, 10.0),
     ));
 }
