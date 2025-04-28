@@ -1,7 +1,6 @@
 # NOTES
 
-## Status
->
+## Status [Only Half Work]
 > Left to put a 3D Transparent Sphere collider where we will spawn multiple balls inside it
 
 <!--toc:start-->
